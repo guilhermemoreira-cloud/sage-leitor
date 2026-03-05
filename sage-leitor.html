@@ -20,7 +20,6 @@
             flex-direction: column;
         }
 
-        /* Header */
         .header {
             background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
             padding: 20px;
@@ -45,7 +44,6 @@
             font-size: 18px;
         }
 
-        /* Container da câmera */
         #video-container {
             position: relative;
             width: 100%;
@@ -60,7 +58,6 @@
             object-fit: cover;
         }
 
-        /* Scanner overlay */
         .scanner-area {
             position: absolute;
             top: 50%;
@@ -91,7 +88,6 @@
             100% { transform: translate(-50%, -100px); }
         }
 
-        /* Botões */
         .controls {
             display: flex;
             gap: 15px;
@@ -125,7 +121,6 @@
             filter: brightness(1.2);
         }
 
-        /* Lista de últimos registros */
         .history {
             flex: 1;
             padding: 20px;
@@ -158,7 +153,6 @@
             margin-top: 4px;
         }
 
-        /* Toast */
         .toast {
             position: fixed;
             bottom: 30px;
@@ -184,7 +178,6 @@
             to { transform: translateY(0); opacity: 1; }
         }
 
-        /* Loading */
         .loading {
             position: absolute;
             top: 50%;
@@ -192,10 +185,42 @@
             transform: translate(-50%, -50%);
             text-align: center;
             color: #00ff00;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 30px;
+            z-index: 10;
         }
 
         .hidden {
             display: none;
+        }
+
+        .config-panel {
+            background: #2d2d2d;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 15px;
+        }
+
+        .config-panel input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #333;
+            color: white;
+        }
+
+        .config-panel button {
+            background: #00ff00;
+            color: #000;
+            border: none;
+            padding: 10px;
+            border-radius: 8px;
+            width: 100%;
+            font-weight: bold;
+            cursor: pointer;
         }
     </style>
 </head>
@@ -205,86 +230,156 @@
         <div class="counter" id="counter">0</div>
     </div>
 
-    <div id="video-container">
-        <video id="video" playsinline></video>
-        <div class="scanner-area"></div>
-        <div class="scanner-line"></div>
-        <div class="loading" id="loading">Ativando câmera...</div>
+    <!-- Painel de configuração (aparece apenas se não configurado) -->
+    <div id="config-panel" class="config-panel">
+        <h3>⚙️ Configurar Planilha</h3>
+        <p style="font-size: 12px; margin-bottom: 10px;">Cole o ID da sua planilha:</p>
+        <input type="text" id="sheet-id" placeholder="Ex: 1a2b3c4d5e6f7g8h9i0j">
+        <p style="font-size: 12px; margin: 10px 0;">Cole o nome da aba:</p>
+        <input type="text" id="sheet-name" value="DADOS BRUTOS">
+        <button onclick="salvarConfig()">✅ SALVAR CONFIGURAÇÃO</button>
+        <p style="font-size: 11px; color: #999; margin-top: 10px;">
+            O ID está na URL: https://docs.google.com/spreadsheets/d/<b>ID_AQUI</b>/edit
+        </p>
     </div>
 
-    <div class="controls">
-        <button class="btn btn-primary" onclick="trocarCamera()" id="cameraBtn">🔄 Trocar câmera</button>
-        <button class="btn btn-secondary" onclick="fechar()">✕ Fechar</button>
-    </div>
+    <div id="scanner-container" class="hidden">
+        <div id="video-container">
+            <video id="video" playsinline></video>
+            <div class="scanner-area"></div>
+            <div class="scanner-line"></div>
+            <div class="loading" id="loading">Ativando câmera...</div>
+        </div>
 
-    <div class="history">
-        <h3>📋 Últimos registros</h3>
-        <div id="history-list"></div>
+        <div class="controls">
+            <button class="btn btn-primary" onclick="trocarCamera()" id="cameraBtn">🔄 Trocar câmera</button>
+            <button class="btn btn-secondary" onclick="reconfigurar()">⚙️ Configurar</button>
+        </div>
+
+        <div class="history">
+            <h3>📋 Últimos registros</h3>
+            <div id="history-list"></div>
+        </div>
     </div>
 
     <div id="toast"></div>
 
     <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+    <script src="https://apis.google.com/js/api.js"></script>
     
     <script>
         // ===================================================
         // CONFIGURAÇÕES
         // ===================================================
-        const CONFIG = {
-            URL_SERVIDOR: 'https://script.google.com/macros/s/AKfycbzUIUdRCRNh5XRzHX_KhbNKtToERDogp9de4ICLsbUsIs1r9-EBoTq94WliopK6ztLQ/exec',
-            SOM: true,
-            VIBRACAO: true
-        };
-
-        // ===================================================
-        // VARIÁVEIS GLOBAIS
-        // ===================================================
+        let SHEET_ID = localStorage.getItem('sage_sheet_id');
+        let SHEET_NAME = localStorage.getItem('sage_sheet_name') || 'DADOS BRUTOS';
+        
         let codeReader = null;
-        let activeCamera = 'environment'; // 'environment' = traseira, 'user' = frontal
+        let activeCamera = 'environment';
         let scanning = true;
         let registrosHoje = 0;
         let ultimosRegistros = [];
         let audioContext = null;
+        let accessToken = null;
 
         // ===================================================
         // INICIALIZAÇÃO
         // ===================================================
         window.onload = function() {
-            mostrarLoading('Preparando...');
             criarAudioContext();
-            iniciarLeitor();
+            
+            if (SHEET_ID) {
+                document.getElementById('config-panel').classList.add('hidden');
+                document.getElementById('scanner-container').classList.remove('hidden');
+                autenticarGoogle();
+            } else {
+                document.getElementById('config-panel').classList.remove('hidden');
+                document.getElementById('scanner-container').classList.add('hidden');
+            }
         };
 
         function criarAudioContext() {
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            } catch (e) {
-                console.log('Áudio não suportado');
-            }
+            } catch (e) {}
         }
 
         function tocarBeep() {
-            if (!CONFIG.SOM || !audioContext) return;
-            
+            if (!audioContext) return;
             try {
                 const oscillator = audioContext.createOscillator();
                 const gainNode = audioContext.createGain();
-                
                 oscillator.connect(gainNode);
                 gainNode.connect(audioContext.destination);
-                
                 oscillator.frequency.value = 800;
                 gainNode.gain.value = 0.3;
-                
                 oscillator.start();
                 oscillator.stop(audioContext.currentTime + 0.1);
             } catch (e) {}
         }
 
         function vibrar() {
-            if (CONFIG.VIBRACAO && navigator.vibrate) {
+            if (navigator.vibrate) {
                 navigator.vibrate(100);
             }
+        }
+
+        // ===================================================
+        // AUTENTICAÇÃO GOOGLE
+        // ===================================================
+        function autenticarGoogle() {
+            mostrarToast('🔄 Autenticando...', 'info');
+            
+            gapi.load('client:auth2', function() {
+                gapi.client.init({
+                    apiKey: 'AIzaSyD-9tSrke72P6ZJOHzYpPJvJRrF7l6F5dI',
+                    clientId: '407408718192.apps.googleusercontent.com',
+                    scope: 'https://www.googleapis.com/auth/spreadsheets',
+                    discoveryDocs: ['https://sheets.googleapis.com/$discovery/rest?version=v4']
+                }).then(function() {
+                    return gapi.auth2.getAuthInstance().signIn({
+                        prompt: 'select_account'
+                    });
+                }).then(function() {
+                    mostrarToast('✅ Autenticado!', 'success');
+                    iniciarLeitor();
+                }).catch(function(err) {
+                    console.error('Erro auth:', err);
+                    mostrarToast('❌ Erro ao autenticar', 'error');
+                });
+            });
+        }
+
+        // ===================================================
+        // CONFIGURAÇÃO
+        // ===================================================
+        function salvarConfig() {
+            const sheetId = document.getElementById('sheet-id').value.trim();
+            const sheetName = document.getElementById('sheet-name').value.trim();
+            
+            if (!sheetId) {
+                mostrarToast('❌ Digite o ID da planilha', 'error');
+                return;
+            }
+            
+            localStorage.setItem('sage_sheet_id', sheetId);
+            localStorage.setItem('sage_sheet_name', sheetName);
+            
+            SHEET_ID = sheetId;
+            SHEET_NAME = sheetName;
+            
+            document.getElementById('config-panel').classList.add('hidden');
+            document.getElementById('scanner-container').classList.remove('hidden');
+            
+            autenticarGoogle();
+        }
+
+        function reconfigurar() {
+            if (codeReader) {
+                codeReader.reset();
+            }
+            document.getElementById('config-panel').classList.remove('hidden');
+            document.getElementById('scanner-container').classList.add('hidden');
         }
 
         // ===================================================
@@ -311,7 +406,6 @@
                 }
             });
 
-            // Esconder loading após 2 segundos
             setTimeout(() => {
                 document.getElementById('loading').classList.add('hidden');
             }, 2000);
@@ -340,7 +434,6 @@
             mostrarLoading('Processando...');
 
             try {
-                // Parse dos dados
                 let dados;
                 try {
                     dados = JSON.parse(text);
@@ -363,22 +456,38 @@
 
                 console.log('QR Code lido:', dados);
 
-                // Enviar para o servidor
-                fetch(CONFIG.URL_SERVIDOR, {
-                    method: 'POST',
-                    mode: 'no-cors', // Importante para evitar CORS
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        action: 'registrar',
-                        dados: dados,
-                        timestamp: new Date().toISOString()
-                    })
-                });
+                // Registrar na planilha
+                registrarNaPlanilha(dados);
 
-                // Como usamos 'no-cors', não temos resposta
-                // Mas assumimos sucesso e registramos localmente
+            } catch (erro) {
+                mostrarToast('❌ QR Code inválido', 'error');
+                setTimeout(() => {
+                    scanning = true;
+                    document.getElementById('loading').classList.add('hidden');
+                }, 500);
+            }
+        }
+
+        // ===================================================
+        // REGISTRAR NA PLANILHA (Google Sheets API)
+        // ===================================================
+        function registrarNaPlanilha(dados) {
+            const agora = new Date();
+            const timestamp = agora.toISOString().replace('T', ' ').substring(0, 19);
+            
+            const valores = [[
+                timestamp,
+                `${dados.nome},${dados.sige}`
+            ]];
+
+            gapi.client.sheets.spreadsheets.values.append({
+                spreadsheetId: SHEET_ID,
+                range: `${SHEET_NAME}!A:B`,
+                valueInputOption: 'USER_ENTERED',
+                insertDataOption: 'INSERT_ROWS',
+                resource: { values: valores }
+            }).then(function(response) {
+                console.log('Registrado com sucesso:', response);
                 
                 registrosHoje++;
                 document.getElementById('counter').textContent = registrosHoje;
@@ -393,16 +502,17 @@
                 setTimeout(() => {
                     scanning = true;
                     document.getElementById('loading').classList.add('hidden');
-                }, 500);
-
-            } catch (erro) {
-                console.error('Erro:', erro);
-                mostrarToast('❌ QR Code inválido', 'error');
+                }, 300);
+                
+            }, function(error) {
+                console.error('Erro ao registrar:', error);
+                mostrarToast('❌ Erro na planilha', 'error');
+                
                 setTimeout(() => {
                     scanning = true;
                     document.getElementById('loading').classList.add('hidden');
-                }, 500);
-            }
+                }, 300);
+            });
         }
 
         // ===================================================
@@ -443,13 +553,6 @@
                     <div class="time">${r.turma} • ${r.hora}</div>
                 </div>
             `).join('');
-        }
-
-        function fechar() {
-            if (codeReader) {
-                codeReader.reset();
-            }
-            window.close();
         }
 
         // ===================================================
